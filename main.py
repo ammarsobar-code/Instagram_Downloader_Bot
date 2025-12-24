@@ -1,54 +1,4 @@
-import os
-import telebot
-from telebot import types
-import requests
-from flask import Flask
-from threading import Thread
-
-# --- 1. سيرفر Flask لمنع النوم ---
-app = Flask('')
-@app.route('/')
-def home(): return "Instagram Bot is Live!"
-def run(): app.run(host='0.0.0.0', port=8080)
-def keep_alive():
-    t = Thread(target=run)
-    t.daemon = True
-    t.start()
-
-# --- 2. إعدادات البوت ---
-# ضع توكن البوت الجديد في Environment Variables باسم BOT_TOKEN في Render
-API_TOKEN = os.getenv('BOT_TOKEN')
-SNAP_LINK = "https://snapchat.com/t/wxsuV6qD" 
-bot = telebot.TeleBot(API_TOKEN)
-user_status = {}
-
-# --- 3. نظام التحقق (بنفس الأسلوب والكلمات) ---
-@bot.message_handler(commands=['start'])
-def send_welcome(message):
-    user_id = message.chat.id
-    user_status[user_id] = "step_1"
-    markup = types.InlineKeyboardMarkup()
-    markup.add(types.InlineKeyboardButton("✅ تمت المتابعة | Done", callback_data="check_1"))
-    
-    msg = f"⚠️ يرجى متابعة حسابي أولاً لتفعيل البوت:\nPlease follow my account first:\n\n{SNAP_LINK}"
-    bot.send_message(user_id, msg, reply_markup=markup)
-
-@bot.callback_query_handler(func=lambda call: True)
-def callback_inline(call):
-    user_id = call.message.chat.id
-    if call.data == "check_1":
-        user_status[user_id] = "step_2"
-        markup = types.InlineKeyboardMarkup()
-        markup.add(types.InlineKeyboardButton("✅ تأكيد | Confirm", callback_data="check_final"))
-        bot.send_message(user_id, f"❌ لم يتم التحقق بعد، تأكد من المتابعة ثم اضغط تأكيد\nVerification failed, make sure to follow then confirm:\n\n{SNAP_LINK}", reply_markup=markup)
-        bot.edit_message_reply_markup(user_id, call.message.message_id, reply_markup=None)
-    
-    elif call.data == "check_final":
-        user_status[user_id] = "verified"
-        bot.send_message(user_id, "✅ تم تفعيل البوت بنجاح! أرسل الرابط الآن\nBot activated successfully! Send the link now")
-        bot.edit_message_reply_markup(user_id, call.message.message_id, reply_markup=None)
-
-# --- 4. معالج تحميل إنستجرام (المنشورات، الريلز، الصور) ---
+# --- معالج تحميل إنستجرام المحدث ---
 @bot.message_handler(func=lambda message: True)
 def handle_instagram(message):
     user_id = message.chat.id
@@ -61,41 +11,34 @@ def handle_instagram(message):
     if "instagram.com" in url:
         prog = bot.reply_to(message, "⏳ جاري التحميل... | Downloading...")
         try:
-            # استخدام API وسيط قوي لإنستجرام
+            # استخدام API بديل ومستقر للانستا
             api_url = f"https://api.v1.savetube.me/info?url={url}"
-            response = requests.get(api_url).json()
+            headers = {'User-Agent': 'Mozilla/5.0'}
+            response = requests.get(api_url, headers=headers).json()
             
-            if response.get('status'):
-                media_data = response.get('data', [])
+            if response.get('status') and response.get('data'):
+                media_items = response['data']
                 
-                # إذا كان المنشور يحتوي على صور أو فيديوهات متعددة (Carousel)
-                if len(media_data) > 1:
+                # إذا كان بوست صور متعددة
+                if len(media_items) > 1:
                     media_group = []
-                    for item in media_data[:10]: # حد تليجرام 10
-                        m_url = item.get('url')
+                    for item in media_items[:10]:
                         if item.get('type') == 'video':
-                            media_group.append(types.InputMediaVideo(m_url))
+                            media_group.append(types.InputMediaVideo(item['url']))
                         else:
-                            media_group.append(types.InputMediaPhoto(m_url))
-                    
+                            media_group.append(types.InputMediaPhoto(item['url']))
                     bot.send_media_group(user_id, media_group)
-                
-                # إذا كان فيديو واحد (ريلز) أو صورة واحدة
-                elif len(media_data) == 1:
-                    m_url = media_data[0].get('url')
-                    if media_data[0].get('type') == 'video':
-                        bot.send_video(user_id, m_url, caption="✅ تم التحميل بنجاح | Downloaded Successfully")
+                else:
+                    # فيديو واحد أو صورة واحدة
+                    m_url = media_items[0]['url']
+                    if media_items[0].get('type') == 'video':
+                        bot.send_video(user_id, m_url, caption="✅ تم التحميل | Done")
                     else:
-                        bot.send_photo(user_id, m_url, caption="✅ تم التحميل بنجاح | Downloaded Successfully")
+                        bot.send_photo(user_id, m_url, caption="✅ تم التحميل | Done")
                 
                 bot.delete_message(user_id, prog.message_id)
             else:
-                bot.edit_message_text("❌ فشل جلب الرابط، تأكد أنه ليس حساباً خاصاً\nFailed to get link, make sure it's not private", user_id, prog.message_id)
-        
+                bot.edit_message_text("❌ الرابط غير مدعوم أو الحساب خاص\nLink not supported or private", user_id, prog.message_id)
         except Exception as e:
-            bot.edit_message_text(f"❌ خطأ تقني | Technical Error", user_id, prog.message_id)
-    else:
-        bot.reply_to(message, "❌ يرجى إرسال رابط إنستجرام صحيح\nPlease send a valid Instagram link")
-
-keep_alive()
-bot.infinity_polling()
+            print(f"Error: {e}") # سيظهر لك في سجلات Render
+            bot.edit_message_text("❌ عذراً، الـ API يواجه ضغطاً حالياً\nAPI is busy, try again", user_id, prog.message_id)
