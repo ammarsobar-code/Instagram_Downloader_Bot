@@ -2,3 +2,4 @@ pyTelegramBotAPI
 requests
 flask
 instaloader
+yt_dlp
