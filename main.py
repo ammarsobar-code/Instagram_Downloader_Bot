@@ -3,10 +3,10 @@ from telebot import types
 from flask import Flask
 from threading import Thread
 
-# --- 1. سيرفر Flask ---
+# --- 1. سيرفر Flask للحفاظ على نشاط البوت ---
 app = Flask('')
 @app.route('/')
-def home(): return "Instagram Pro Downloader Live"
+def home(): return "Instagram Pro Live"
 def run(): app.run(host='0.0.0.0', port=8080)
 def keep_alive():
     t = Thread(target=run)
@@ -17,10 +17,9 @@ def keep_alive():
 API_TOKEN = os.getenv('BOT_TOKEN')
 SNAP_LINK = "https://snapchat.com/t/wxsuV6qD" 
 bot = telebot.TeleBot(API_TOKEN)
-L = instaloader.Instaloader()
 user_status = {}
 
-# --- 3. نظام التحقق (مع الخط العريض Bold) ---
+# --- 3. نظام التحقق والمتابعة (Bold + رسائل منفصلة) ---
 @bot.message_handler(commands=['start'])
 def send_welcome(message):
     user_id = message.chat.id
@@ -55,7 +54,7 @@ def handle_verification(call):
         user_status[user_id] = "verified"
         bot.send_message(user_id, "تم تفعيل البوت بنجاح ✅\nالرجاء ارسال الرابط 🔗\n\nThe bot has been successfully activated ✅")
 
-# --- 4. معالج التحميل (دعم الفيديوهات الكبيرة) ---
+# --- 4. معالج التحميل الذكي (فيديو أو رابط مباشر) ---
 @bot.message_handler(func=lambda message: True)
 def handle_insta(message):
     user_id = message.chat.id
@@ -67,11 +66,12 @@ def handle_insta(message):
     if "instagram.com" in url:
         prog = bot.reply_to(message, "جاري التحميل ... ⏳\nLoading... ⏳")
         try:
-            # محاولة التحميل عبر yt-dlp (أفضل للملفات الكبيرة)
             ydl_opts = {'format': 'best', 'quiet': True}
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 info = ydl.extract_info(url, download=False)
-                # إذا كان ألبوم (Carousel)
+                video_url = info.get('url')
+                
+                # التعامل مع الألبومات
                 if 'entries' in info:
                     media_group = []
                     for entry in info['entries'][:10]:
@@ -80,24 +80,39 @@ def handle_insta(message):
                         else:
                             media_group.append(types.InputMediaPhoto(entry['url']))
                     bot.send_media_group(user_id, media_group)
+                    bot.send_message(user_id, "تم التحميل ✅\nDone ✅")
+                
                 else:
-                    # فيديو أو صورة واحدة
-                    video_url = info.get('url')
-                    if info.get('vcodec') != 'none':
-                        bot.send_video(user_id, video_url)
-                    else:
-                        bot.send_photo(user_id, video_url)
-            
-            bot.send_message(user_id, "تم التحميل ✅\nDone ✅")
+                    try:
+                        # محاولة إرسال الفيديو كملف
+                        if info.get('vcodec') != 'none':
+                            bot.send_video(user_id, video_url)
+                        else:
+                            bot.send_photo(user_id, video_url)
+                        bot.send_message(user_id, "تم التحميل ✅\nDone ✅")
+                        
+                    except Exception:
+                        # إذا كان الحجم كبيراً جداً (أكبر من 50MB)
+                        over_size_text = (
+                            "نظرا لان المقطع المرسل كبير جدا تم ارسال رابط تحميل مباشر 🔗✅\n"
+                            "Due to the video size being too large, a direct download link has been sent 🔗✅\n\n"
+                            f"<a href='{video_url}'>🔗 اضغط هنا للتحميل المباشر | Click here to download</a>"
+                        )
+                        bot.send_message(user_id, over_size_text, parse_mode='HTML')
+
             bot.delete_message(user_id, prog.message_id)
 
         except Exception:
-            bot.edit_message_text("نعتذر منك نواجه مشكلة تقنية (قد يكون الفيديو كبيراً جداً أو الحساب خاصاً) ❌", user_id, prog.message_id)
+            bot.edit_message_text("نعتذر منك نواجه مشكلة تقنية، تأكد أن الحساب عام وليس خاصاً ❌", user_id, prog.message_id)
     else:
-        bot.reply_to(message, "الرجاء ارسال رابط الصحيح ❌")
+        bot.reply_to(message, "الرجاء ارسال رابط صحيح ❌\nPlease send a valid link ❌")
 
+# --- 5. التشغيل الآمن ---
 if __name__ == "__main__":
     keep_alive()
-    bot.remove_webhook()
+    try:
+        bot.remove_webhook()
+    except:
+        pass
     time.sleep(1)
-    bot.infinity_polling()
+    bot.infinity_polling(timeout=20, long_polling_timeout=10)
