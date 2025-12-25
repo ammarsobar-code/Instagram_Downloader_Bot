@@ -6,7 +6,7 @@ from threading import Thread
 # سيرفر Flask
 app = Flask('')
 @app.route('/')
-def home(): return "Insta Live"
+def home(): return "Insta Multi-Post Live"
 def run(): app.run(host='0.0.0.0', port=8080)
 def keep_alive():
     t = Thread(target=run)
@@ -48,19 +48,36 @@ def handle_insta(message):
     
     url = message.text.strip()
     if "instagram.com" in url:
-        prog = bot.reply_to(message, "⏳ جاري محاولة التحميل... | Downloading...")
+        prog = bot.reply_to(message, "⏳ جاري جلب المنشور المتعدد... | Processing...")
         try:
-            # استخراج الكود القصير من الرابط
+            # استخراج الكود من الرابط
             shortcode = url.split("/")[-2]
             post = instaloader.Post.from_shortcode(L.context, shortcode)
             
-            if post.is_video:
+            # فحص إذا كان المنشور يحتوي على عدة صور/فيديوهات (Carousel)
+            if post.typename == 'GraphSidecar':
+                media_group = []
+                for node in post.get_sidecar_nodes():
+                    if node.is_video:
+                        media_group.append(types.InputMediaVideo(node.video_url))
+                    else:
+                        media_group.append(types.InputMediaPhoto(node.display_url))
+                
+                # تليجرام يسمح بحد أقصى 10 ملفات في المجموعة الواحدة
+                bot.send_media_group(message.chat.id, media_group[:10])
+            
+            # إذا كان فيديو واحد (Reel)
+            elif post.is_video:
                 bot.send_video(message.chat.id, post.video_url, caption="✅ Done")
+            
+            # إذا كانت صورة واحدة فقط
             else:
                 bot.send_photo(message.chat.id, post.url, caption="✅ Done")
+                
             bot.delete_message(message.chat.id, prog.message_id)
+            
         except Exception as e:
-            bot.edit_message_text("❌ الخدمة مقيدة حالياً من إنستجرام، حاول لاحقاً.", message.chat.id, prog.message_id)
+            bot.edit_message_text("❌ لم نتمكن من جلب كافة الصور، قد يكون الحساب خاصاً.", message.chat.id, prog.message_id)
 
 keep_alive()
 bot.infinity_polling()
