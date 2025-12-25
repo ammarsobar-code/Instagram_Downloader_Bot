@@ -1,141 +1,101 @@
-import os, telebot, requests, instaloader, time
+import os, telebot, requests, instaloader, time, yt_dlp
 from telebot import types
 from flask import Flask
 from threading import Thread
 
-# --- 1. سيرفر Flask للحفاظ على نشاط البوت ---
+# --- 1. سيرفر Flask ---
 app = Flask('')
 @app.route('/')
-def home(): return "Instagram Downloader Live"
+def home(): return "Instagram Pro Downloader Live"
 def run(): app.run(host='0.0.0.0', port=8080)
 def keep_alive():
     t = Thread(target=run)
     t.daemon = True
     t.start()
 
-# --- 2. إعدادات البوت والمحرك ---
+# --- 2. إعدادات البوت ---
 API_TOKEN = os.getenv('BOT_TOKEN')
 SNAP_LINK = "https://snapchat.com/t/wxsuV6qD" 
 bot = telebot.TeleBot(API_TOKEN)
 L = instaloader.Instaloader()
-
 user_status = {}
 
-# --- 3. نظام التحقق والمتابعة (رسائل منفصلة) ---
+# --- 3. نظام التحقق (مع الخط العريض Bold) ---
 @bot.message_handler(commands=['start'])
 def send_welcome(message):
     user_id = message.chat.id
-    
-    # رسالة الترحيب الأولى
     welcome_text = (
         "اهلا بك 👋🏼\n"
-        "شكرا لاستخدامك بوت تحميل مقاطع الانستجرام \n"
-        "أولا سيجب عليك متابعة حسابي في سناب شات لتشغيل البوت\n\n"
+        "شكرا لاستخدامك بوت تحميل مقاطع الانستجرام\n"
+        "<b>⚠️ أولاً سيجب عليك متابعة حسابي في سناب شات لتشغيل البوت</b>\n\n"
         "Welcome 👋🏼\n"
-        "Thank you for using Instagram Downloader Bot \n"
-        "First, you'll need to follow my Snapchat account to activate the bot"
+        "Thank you for using Instagram Downloader Bot\n"
+        "<b>⚠️ First, you'll need to follow my Snapchat account to activate the bot</b>"
     )
-    
     markup = types.InlineKeyboardMarkup()
-    btn_follow = types.InlineKeyboardButton("متابعة الحساب 👻 Follow", url=SNAP_LINK)
-    btn_confirm = types.InlineKeyboardButton("تفعيل البوت 🔓 Activate", callback_data="insta_step_1")
-    markup.add(btn_follow)
-    markup.add(btn_confirm)
-    
-    bot.send_message(user_id, welcome_text, reply_markup=markup)
+    markup.add(types.InlineKeyboardButton("متابعة الحساب 👻 Follow", url=SNAP_LINK))
+    markup.add(types.InlineKeyboardButton("تفعيل البوت 🔓 Activate", callback_data="insta_step_1"))
+    bot.send_message(user_id, welcome_text, reply_markup=markup, parse_mode='HTML')
 
 @bot.callback_query_handler(func=lambda call: True)
 def handle_verification(call):
     user_id = call.message.chat.id
-    
     if call.data == "insta_step_1":
-        # رسالة الاعتذار (منفصلة) كما طلبت
         fail_msg = (
             "نعتذر منك لم يتم التحقق من متابعتك لحساب سناب شات ❌👻\n"
-            "الرجاء الضغط على متابعة الحساب وسيتم توجيهك لسناب شات وبعد المتابعة اضغط على زر تفعيل البوت 🔓\n\n"
+            "<b>الرجاء الضغط على متابعة الحساب وبعد المتابعة اضغط على زر تفعيل البوت 🔓</b>\n\n"
             "We apologize, but your Snapchat account follow request has not been verified. ❌👻\n"
-            "Please click \"Follow Account\" and you will be redirected to Snapchat. After following, click the \"Activate\" button. 🔓"
+            "<b>Please click Follow Account and then click the Activate button. 🔓</b>"
         )
         markup = types.InlineKeyboardMarkup()
         markup.add(types.InlineKeyboardButton("متابعة الحساب 👻 Follow", url=SNAP_LINK))
         markup.add(types.InlineKeyboardButton("تفعيل البوت 🔓 Activate", callback_data="insta_step_2"))
-        bot.send_message(user_id, fail_msg, reply_markup=markup)
-        
+        bot.send_message(user_id, fail_msg, reply_markup=markup, parse_mode='HTML')
     elif call.data == "insta_step_2":
         user_status[user_id] = "verified"
-        success_text = (
-            "تم تفعيل البوت بنجاح ✅\n"
-            "الرجاء ارسال الرابط 🔗\n\n"
-            "The bot has been successfully activated ✅ \n"
-            "Please send the link 🔗"
-        )
-        bot.send_message(user_id, success_text)
+        bot.send_message(user_id, "تم تفعيل البوت بنجاح ✅\nالرجاء ارسال الرابط 🔗\n\nThe bot has been successfully activated ✅")
 
-# --- 4. معالج تحميل إنستجرام (فيديو، صور، ألبومات) ---
+# --- 4. معالج التحميل (دعم الفيديوهات الكبيرة) ---
 @bot.message_handler(func=lambda message: True)
 def handle_insta(message):
     user_id = message.chat.id
     url = message.text.strip()
-
     if user_status.get(user_id) != "verified":
         send_welcome(message)
         return
 
     if "instagram.com" in url:
-        # رسالة جاري التحميل
-        loading_text = (
-            "جاري التحميل ... ⏳\n"
-            "Loading... ⏳"
-        )
-        prog = bot.reply_to(message, loading_text)
-        
+        prog = bot.reply_to(message, "جاري التحميل ... ⏳\nLoading... ⏳")
         try:
-            # استخراج الكود من الرابط
-            shortcode = url.split("/")[-2]
-            post = instaloader.Post.from_shortcode(L.context, shortcode)
-            
-            # 1. إذا كان المنشور يحتوي على عدة صور/فيديوهات (Carousel)
-            if post.typename == 'GraphSidecar':
-                media_group = []
-                for node in post.get_sidecar_nodes():
-                    if node.is_video:
-                        media_group.append(types.InputMediaVideo(node.video_url))
+            # محاولة التحميل عبر yt-dlp (أفضل للملفات الكبيرة)
+            ydl_opts = {'format': 'best', 'quiet': True}
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                info = ydl.extract_info(url, download=False)
+                # إذا كان ألبوم (Carousel)
+                if 'entries' in info:
+                    media_group = []
+                    for entry in info['entries'][:10]:
+                        if entry.get('vcodec') != 'none':
+                            media_group.append(types.InputMediaVideo(entry['url']))
+                        else:
+                            media_group.append(types.InputMediaPhoto(entry['url']))
+                    bot.send_media_group(user_id, media_group)
+                else:
+                    # فيديو أو صورة واحدة
+                    video_url = info.get('url')
+                    if info.get('vcodec') != 'none':
+                        bot.send_video(user_id, video_url)
                     else:
-                        media_group.append(types.InputMediaPhoto(node.display_url))
-                bot.send_media_group(user_id, media_group[:10])
+                        bot.send_photo(user_id, video_url)
             
-            # 2. إذا كان فيديو واحد (Reel)
-            elif post.is_video:
-                bot.send_video(user_id, post.video_url)
-            
-            # 3. إذا كانت صورة واحدة فقط
-            else:
-                bot.send_photo(user_id, post.url)
-                
-            # رسالة تم التحميل
-            done_text = (
-                "تم التحميل ✅\n"
-                "Done ✅"
-            )
-            bot.send_message(user_id, done_text)
+            bot.send_message(user_id, "تم التحميل ✅\nDone ✅")
             bot.delete_message(user_id, prog.message_id)
-            
-        except Exception:
-            # رسالة المشكلة التقنية
-            error_tech = (
-                "نعتذر منك نواجه الان مشكله تقنية وسيتم معالجتها في أقرب وقت ❌\n\n"
-                "We apologize, we are currently experiencing a technical issue and it will be resolved as soon as possible ❌"
-            )
-            bot.edit_message_text(error_tech, user_id, prog.message_id)
-    else:
-        # رسالة الرابط غير الصحيح
-        wrong_link = (
-            "الرجاء ارسال رابط الصحيح ❌\n\n"
-            "Please send the correct link ❌"
-        )
-        bot.reply_to(message, wrong_link)
 
-# --- 5. التشغيل الآمن ---
+        except Exception:
+            bot.edit_message_text("نعتذر منك نواجه مشكلة تقنية (قد يكون الفيديو كبيراً جداً أو الحساب خاصاً) ❌", user_id, prog.message_id)
+    else:
+        bot.reply_to(message, "الرجاء ارسال رابط الصحيح ❌")
+
 if __name__ == "__main__":
     keep_alive()
     bot.remove_webhook()
