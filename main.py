@@ -16,7 +16,6 @@ def keep_alive():
     t.start()
 
 # --- 2. إعدادات البوت وتريف المتغيرات ---
-# تأكد من وضع التوكن في Environment Variables باسم BOT_TOKEN
 API_TOKEN = os.getenv('BOT_TOKEN')
 SNAP_LINK = "https://snapchat.com/t/wxsuV6qD" 
 bot = telebot.TeleBot(API_TOKEN)
@@ -48,13 +47,12 @@ def callback_inline(call):
         bot.send_message(user_id, "✅ تم تفعيل البوت بنجاح! أرسل الرابط الآن\nBot activated successfully! Send the link now")
         bot.edit_message_reply_markup(user_id, call.message.message_id, reply_markup=None)
 
-# --- 4. معالج تحميل إنستجرام (فيديو، ريلز، صور) ---
+# --- 4. معالج تحميل إنستجرام المطور ---
 @bot.message_handler(func=lambda message: True)
 def handle_instagram(message):
     user_id = message.chat.id
     url = message.text.strip()
 
-    # فحص حالة التحقق
     if user_status.get(user_id) != "verified":
         send_welcome(message)
         return
@@ -62,41 +60,40 @@ def handle_instagram(message):
     if "instagram.com" in url:
         prog = bot.reply_to(message, "⏳ جاري التحميل... | Downloading...")
         try:
-            # API قوي يدعم جميع أنواع ميديا إنستجرام
+            # استخدام API متخصص وشامل للإنستجرام
             api_url = f"https://api.v1.savetube.me/info?url={url}"
-            response = requests.get(api_url).json()
+            headers = {'User-Agent': 'Mozilla/5.0'}
+            response = requests.get(api_url, headers=headers).json()
             
             if response.get('status') and response.get('data'):
                 media_items = response['data']
                 
-                # حالة المنشورات المتعددة (Carousel)
+                # الصور المتعددة أو الفيديوهات المتعددة
                 if len(media_items) > 1:
                     media_group = []
-                    for item in media_items[:10]: # حد تليجرام 10 قطع
+                    for item in media_items[:10]:
                         if item.get('type') == 'video':
                             media_group.append(types.InputMediaVideo(item['url']))
                         else:
                             media_group.append(types.InputMediaPhoto(item['url']))
                     bot.send_media_group(user_id, media_group)
-                
-                # حالة الفيديو الواحد أو الصورة الواحدة
                 else:
-                    m_url = media_items[0]['url']
-                    if media_items[0].get('type') == 'video':
-                        bot.send_video(user_id, m_url, caption="✅ تم التحميل بنجاح | Downloaded Successfully")
+                    # فيديو أو صورة مفردة
+                    m = media_items[0]
+                    if m.get('type') == 'video':
+                        bot.send_video(user_id, m['url'], caption="✅ تم التحميل بنجاح | Done")
                     else:
-                        bot.send_photo(user_id, m_url, caption="✅ تم التحميل بنجاح | Downloaded Successfully")
+                        bot.send_photo(user_id, m['url'], caption="✅ تم التحميل بنجاح | Done")
                 
                 bot.delete_message(user_id, prog.message_id)
             else:
                 bot.edit_message_text("❌ الحساب خاص أو الرابط غير مدعوم\nAccount is private or link unsupported", user_id, prog.message_id)
         
-        except Exception as e:
-            bot.edit_message_text(f"❌ خطأ تقني | Technical Error", user_id, prog.message_id)
+        except Exception:
+            bot.edit_message_text(f"❌ خطأ تقني، جرب مرة أخرى\nTechnical Error, try again", user_id, prog.message_id)
     else:
         bot.reply_to(message, "❌ يرجى إرسال رابط إنستجرام صحيح\nPlease send a valid Instagram link")
 
-# --- 5. تشغيل البوت ---
 if __name__ == "__main__":
     keep_alive()
     bot.infinity_polling()
