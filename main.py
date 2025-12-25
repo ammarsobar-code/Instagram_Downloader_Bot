@@ -1,8 +1,9 @@
-import os, telebot, requests
+import os, telebot, requests, instaloader
 from telebot import types
 from flask import Flask
 from threading import Thread
 
+# سيرفر Flask
 app = Flask('')
 @app.route('/')
 def home(): return "Insta Live"
@@ -15,6 +16,8 @@ def keep_alive():
 API_TOKEN = os.getenv('BOT_TOKEN')
 SNAP_LINK = "https://snapchat.com/t/wxsuV6qD" 
 bot = telebot.TeleBot(API_TOKEN)
+L = instaloader.Instaloader()
+
 user_status = {}
 
 @bot.message_handler(commands=['start'])
@@ -42,29 +45,22 @@ def handle_insta(message):
     if user_status.get(message.chat.id) != "verified":
         send_welcome(message)
         return
-
+    
     url = message.text.strip()
     if "instagram.com" in url:
-        prog = bot.reply_to(message, "⏳ جاري التحميل... | Downloading...")
+        prog = bot.reply_to(message, "⏳ جاري محاولة التحميل... | Downloading...")
         try:
-            # استخدام API بديل يتجاوز حظر السيرفرات
-            api_url = "https://api.cobalt.tools/api/json"
-            headers = {"Accept": "application/json", "Content-Type": "application/json"}
-            data = {"url": url, "vCodec": "h264"}
+            # استخراج الكود القصير من الرابط
+            shortcode = url.split("/")[-2]
+            post = instaloader.Post.from_shortcode(L.context, shortcode)
             
-            response = requests.post(api_url, json=data, headers=headers).json()
-            
-            if response.get('status') == 'stream' or response.get('status') == 'redirect':
-                bot.send_video(message.chat.id, response['url'], caption="✅ Done")
-                bot.delete_message(message.chat.id, prog.message_id)
-            elif response.get('status') == 'picker': # صور متعددة
-                media = [types.InputMediaPhoto(item['url']) for item in response['picker']]
-                bot.send_media_group(message.chat.id, media[:10])
-                bot.delete_message(message.chat.id, prog.message_id)
+            if post.is_video:
+                bot.send_video(message.chat.id, post.video_url, caption="✅ Done")
             else:
-                bot.edit_message_text("❌ لم نتمكن من جلب الفيديو، تأكد أن الحساب عام", message.chat.id, prog.message_id)
-        except:
-            bot.edit_message_text("❌ عذراً، الخدمة مشغولة حالياً", message.chat.id, prog.message_id)
+                bot.send_photo(message.chat.id, post.url, caption="✅ Done")
+            bot.delete_message(message.chat.id, prog.message_id)
+        except Exception as e:
+            bot.edit_message_text("❌ الخدمة مقيدة حالياً من إنستجرام، حاول لاحقاً.", message.chat.id, prog.message_id)
 
 keep_alive()
 bot.infinity_polling()
