@@ -71,7 +71,6 @@ def handle_insta(message):
                 info = ydl.extract_info(url, download=False)
                 video_url = info.get('url')
                 
-                # التعامل مع الألبومات
                 if 'entries' in info:
                     media_group = []
                     for entry in info['entries'][:10]:
@@ -84,7 +83,6 @@ def handle_insta(message):
                 
                 else:
                     try:
-                        # محاولة إرسال الفيديو كملف
                         if info.get('vcodec') != 'none':
                             bot.send_video(user_id, video_url)
                         else:
@@ -92,7 +90,6 @@ def handle_insta(message):
                         bot.send_message(user_id, "تم التحميل ✅\nDone ✅")
                         
                     except Exception:
-                        # إذا كان الحجم كبيراً جداً (أكبر من 50MB)
                         over_size_text = (
                             "نظرا لان المقطع المرسل كبير جدا تم ارسال رابط تحميل مباشر 🔗✅\n"
                             "Due to the video size being too large, a direct download link has been sent 🔗✅\n\n"
@@ -103,7 +100,12 @@ def handle_insta(message):
             bot.delete_message(user_id, prog.message_id)
 
         except Exception:
-            bot.edit_message_text("نعتذر منك نواجه مشكلة تقنية، تأكد أن الحساب عام وليس خاصاً ❌", user_id, prog.message_id)
+            # عودة رسالة الخطأ الأصلية كما طلبت
+            error_tech = (
+                "نعتذر منك نواجه الان مشكله تقنية وسيتم معالجتها في أقرب وقت ❌\n\n"
+                "We apologize, we are currently experiencing a technical issue and it will be resolved as soon as possible ❌"
+            )
+            bot.edit_message_text(error_tech, user_id, prog.message_id)
     else:
         bot.reply_to(message, "الرجاء ارسال رابط صحيح ❌\nPlease send a valid link ❌")
 
