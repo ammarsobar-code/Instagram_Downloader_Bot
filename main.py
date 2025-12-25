@@ -29,10 +29,10 @@ def send_welcome(message):
     # رسالة الترحيب الأولى
     welcome_text = (
         "اهلا بك 👋🏼\n"
-        "شكرا لاستخدامك بوت تحميل مقاطع الانستجرام 👻\n"
+        "شكرا لاستخدامك بوت تحميل مقاطع الانستجرام \n"
         "أولا سيجب عليك متابعة حسابي في سناب شات لتشغيل البوت\n\n"
         "Welcome 👋🏼\n"
-        "Thank you for using the Instagram Downloader Bot 👻\n"
+        "Thank you for using Instagram Downloader Bot \n"
         "First, you'll need to follow my Snapchat account to activate the bot"
     )
     
