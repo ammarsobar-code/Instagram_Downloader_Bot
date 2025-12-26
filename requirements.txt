@@ -1,5 +1,5 @@
-pyTelegramBotAPI
-requests
-flask
+pyTelegramBotAPI==4.26.0
+flask==3.0.3
+requests==2.32.3
+yt-dlp
 instaloader
-yt_dlp
