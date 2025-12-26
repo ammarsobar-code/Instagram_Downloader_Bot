@@ -3,7 +3,7 @@ from telebot import types
 from flask import Flask
 from threading import Thread
 
-# --- 1. سيرفر Flask للحفاظ على نشاط البوت ---
+# --- 1. سيرفر Flask للحفاظ على نشاط البوت على Render ---
 app = Flask('')
 @app.route('/')
 def home(): return "Instagram Ultra Bot is Online"
@@ -14,27 +14,32 @@ def keep_alive():
     t.start()
 
 # --- 2. إعدادات البوت ---
-API_TOKEN = os.getenv('BOT_TOKEN')
+# تأكد من وضع التوكن في Environment Variables باسم BOT_TOKEN
+API_TOKEN = os.getenv('BOT_TOKEN') 
 SNAP_LINK = "https://snapchat.com/t/wxsuV6qD" 
 bot = telebot.TeleBot(API_TOKEN)
 user_status = {}
 
-# --- 3. وظائف التحميل المتعددة (Multi-Source Functions) ---
+# --- 3. وظائف التحميل المتعددة ---
 
 def fetch_insta_api(url):
-    """المصدر الأول: API خارجي سريع (مثال TikWM لديه قسم لانستا)"""
+    """المحرك الأول: API خارجي سريع"""
     try:
-        # ملاحظة: نستخدم هنا API عام وشهير يدعم انستجرام
         api_url = f"https://api.tikwm.com/api/instagram/post?url={url}"
-        res = requests.get(api_url, timeout=10).json()
+        res = requests.get(api_url, timeout=12).json()
         if res.get('code') == 0:
             return res['data']
     except: return None
 
 def fetch_insta_ytdlp(url):
-    """المصدر الثاني: المحرك الأقوى yt-dlp في حال فشل الـ API"""
+    """المحرك الثاني: yt-dlp القوي"""
     try:
-        ydl_opts = {'format': 'best', 'quiet': True, 'no_warnings': True}
+        ydl_opts = {
+            'format': 'best',
+            'quiet': True,
+            'no_warnings': True,
+            'cachedir': False
+        }
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=False)
             return info
@@ -46,10 +51,10 @@ def fetch_insta_ytdlp(url):
 def send_welcome(message):
     user_id = message.chat.id
     welcome_text = (
-        "اهلا بك 👋🏼\n"
+        "<b>اهلا بك 👋🏼</b>\n"
         "شكرا لاستخدامك بوت تحميل مقاطع الانستجرام\n"
         "<b>⚠️ أولاً سيجب عليك متابعة حسابي في سناب شات لتشغيل البوت</b>\n\n"
-        "Welcome 👋🏼\n"
+        "<b>Welcome 👋🏼</b>\n"
         "Thank you for using Instagram Downloader Bot\n"
         "<b>⚠️ First, you'll need to follow my Snapchat account to activate the bot</b>"
     )
@@ -63,10 +68,10 @@ def handle_verification(call):
     user_id = call.message.chat.id
     if call.data == "insta_step_1":
         fail_msg = (
-            "نعتذر منك لم يتم التحقق من متابعتك لحساب سناب شات ❌👻\n"
-            "<b>الرجاء الضغط على متابعة الحساب وبعد المتابعة اضغط على زر تفعيل البوت 🔓</b>\n\n"
-            "We apologize, but your Snapchat account follow request has not been verified. ❌👻\n"
-            "<b>Please click Follow Account and then click the Activate button. 🔓</b>"
+            "<b>نعتذر منك لم يتم التحقق من متابعتك لحساب سناب شات ❌👻</b>\n"
+            "الرجاء الضغط على متابعة الحساب وبعد المتابعة اضغط على زر <b>تفعيل البوت 🔓</b>\n\n"
+            "<b>We apologize, but your Snapchat account follow request has not been verified. ❌👻</b>\n"
+            "Please click Follow Account and then click the <b>Activate</b> button. 🔓"
         )
         markup = types.InlineKeyboardMarkup()
         markup.add(types.InlineKeyboardButton("متابعة الحساب 👻 Follow", url=SNAP_LINK))
@@ -74,9 +79,9 @@ def handle_verification(call):
         bot.send_message(user_id, fail_msg, reply_markup=markup, parse_mode='HTML')
     elif call.data == "insta_step_2":
         user_status[user_id] = "verified"
-        bot.send_message(user_id, "تم تفعيل البوت بنجاح ✅\nالرجاء ارسال الرابط 🔗\n\nThe bot has been successfully activated ✅")
+        bot.send_message(user_id, "<b>تم تفعيل البوت بنجاح ✅\nالرجاء ارسال الرابط 🔗\n\nThe bot has been successfully activated ✅</b>", parse_mode='HTML')
 
-# --- 5. معالج التحميل الذكي المطور ---
+# --- 5. معالج التحميل الرئيسي ---
 
 @bot.message_handler(func=lambda message: True)
 def handle_insta_download(message):
@@ -88,59 +93,55 @@ def handle_insta_download(message):
         return
 
     if "instagram.com" in url:
-        prog = bot.reply_to(message, "جاري التحميل ... ⏳\nLoading... ⏳")
+        prog = bot.reply_to(message, "<b>جاري التحميل ... ⏳\nLoading... ⏳</b>", parse_mode='HTML')
         
-        # --- المحاولة بالمصدر الأول (API) ---
+        # --- المرحلة 1: محاولة الـ API السريع ---
         data = fetch_insta_api(url)
         if data:
             try:
-                # التحقق من وجود صور (ألبوم)
                 if data.get('images'):
-                    media_group = [types.InputMediaPhoto(img) for img in data['images'][:10]]
-                    bot.send_media_group(user_id, media_group)
+                    media = [types.InputMediaPhoto(img) for img in data['images'][:10]]
+                    bot.send_media_group(user_id, media)
                 else:
-                    bot.send_video(user_id, data['play'])
-                
-                bot.send_message(user_id, "تم التحميل ✅\nDone ✅")
+                    bot.send_video(user_id, data['play'], caption="<b>تم التحميل بواسطة ALL MEDIA ✅</b>", parse_mode='HTML')
                 bot.delete_message(user_id, prog.message_id)
                 return
-            except: pass # إذا فشل ننتقل للمحرك القادم
+            except: pass
 
-        # --- المحاولة بالمصدر الثاني (yt-dlp) ---
+        # --- المرحلة 2: محاولة yt-dlp (المحرك الأقوى) ---
         info = fetch_insta_ytdlp(url)
         if info:
             try:
                 video_url = info.get('url')
                 if info.get('vcodec') != 'none':
-                    bot.send_video(user_id, video_url)
+                    bot.send_video(user_id, video_url, caption="<b>تم التحميل بواسطة المحرك الاحترافي ✅</b>", parse_mode='HTML')
                 else:
                     bot.send_photo(user_id, video_url)
-                
-                bot.send_message(user_id, "تم التحميل ✅\nDone ✅")
                 bot.delete_message(user_id, prog.message_id)
-            except Exception:
-                # معالجة المساحات الكبيرة برابط مباشر
+            except:
+                # رابط مباشر للمساحات الكبيرة
                 over_size_text = (
-                    "نظرا لان المقطع المرسل كبير جدا تم ارسال رابط تحميل مباشر 🔗✅\n"
-                    "Due to the video size being too large, a direct download link has been sent 🔗✅\n\n"
-                    f"<a href='{info.get('url')}'>🔗 اضغط هنا للتحميل المباشر | Click here to download</a>"
+                    "<b>نظرا لان المقطع المرسل كبير جدا تم ارسال رابط تحميل مباشر 🔗✅</b>\n\n"
+                    f"<a href='{info.get('url')}'>🔗 اضغط هنا للتحميل المباشر</a>"
                 )
                 bot.edit_message_text(over_size_text, user_id, prog.message_id, parse_mode='HTML')
         else:
-            # رسالة الخطأ التقني الأصلية
             error_tech = (
-                "نعتذر منك نواجه الان مشكله تقنية وسيتم معالجتها في أقرب وقت ❌\n\n"
-                "We apologize, we are currently experiencing a technical issue and it will be resolved as soon as possible ❌"
+                "<b>نعتذر منك نواجه الان مشكله تقنية وسيتم معالجتها في أقرب وقت ❌</b>\n\n"
+                "<b>We apologize, we are experiencing a technical issue ❌</b>"
             )
-            bot.edit_message_text(error_tech, user_id, prog.message_id)
+            bot.edit_message_text(error_tech, user_id, prog.message_id, parse_mode='HTML')
     else:
-        bot.reply_to(message, "الرجاء ارسال رابط صحيح ❌\nPlease send a valid link ❌")
+        bot.reply_to(message, "<b>الرجاء ارسال رابط صحيح ❌\nPlease send a valid link ❌</b>", parse_mode='HTML')
 
-# --- 6. التشغيل الآمن ---
+# --- 6. التشغيل الآمن والذكي ---
 if __name__ == "__main__":
     keep_alive()
-    try:
-        bot.remove_webhook()
-    except: pass
-    time.sleep(1)
-    bot.infinity_polling(timeout=20, long_polling_timeout=10)
+    print("Instagram Bot is Starting...")
+    while True:
+        try:
+            bot.remove_webhook()
+            bot.infinity_polling(timeout=20, long_polling_timeout=10)
+        except Exception as e:
+            print(f"Polling Error: {e}")
+            time.sleep(5) # منع الـ Conflict وتكرار الخطأ
