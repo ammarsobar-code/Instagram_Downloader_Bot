@@ -3,7 +3,7 @@ from telebot import types
 from flask import Flask
 from threading import Thread
 from yt_dlp import YoutubeDL
-from moviepy.editor import VideoFileClip
+from moviepy import VideoFileClip
 
 # --- 1. سيرفر Flask للحفاظ على نشاط البوت على Render ---
 app = Flask('')
