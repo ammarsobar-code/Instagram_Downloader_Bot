@@ -1,3 +1,6 @@
 pyTelegramBotAPI
 flask
 requests
+yt-dlp
+gallery-dl
+instaloader
