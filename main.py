@@ -2,17 +2,21 @@ import os
 import subprocess
 import shutil
 from telegram import Update
-from telegram.ext import ApplicationBuilder, MessageHandler, ContextTypes, filters
+from telegram.ext import (
+    ApplicationBuilder,
+    MessageHandler,
+    ContextTypes,
+    filters
+)
 
 DOWNLOAD_DIR = "downloads"
 os.makedirs(DOWNLOAD_DIR, exist_ok=True)
 
 
 def clean_downloads():
-    for f in os.listdir(DOWNLOAD_DIR):
-        path = os.path.join(DOWNLOAD_DIR, f)
-        if os.path.isfile(path):
-            os.remove(path)
+    if os.path.exists(DOWNLOAD_DIR):
+        shutil.rmtree(DOWNLOAD_DIR)
+    os.makedirs(DOWNLOAD_DIR, exist_ok=True)
 
 
 def download_with_parth_dl(url):
@@ -76,7 +80,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         files = download_with_gallery_dl(url)
 
     if not files:
-        await update.message.reply_text("❌ فشل التحميل من إنستجرام")
+        await update.message.reply_text("❌ فشل التحميل")
         return
 
     for file_path in files:
@@ -84,18 +88,19 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_document(
                 document=open(file_path, "rb")
             )
-        except Exception:
-            pass
+        except Exception as e:
+            print("Send error:", e)
 
-    shutil.rmtree(DOWNLOAD_DIR, ignore_errors=True)
-    os.makedirs(DOWNLOAD_DIR, exist_ok=True)
+    clean_downloads()
 
 
 if __name__ == "__main__":
-    BOT_TOKEN = os.getenv("BOT_TOKEN")  # حطه في Environment Variables
+    BOT_TOKEN = os.getenv("BOT_TOKEN")
 
     app = ApplicationBuilder().token(BOT_TOKEN).build()
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    app.add_handler(
+        MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message)
+    )
 
     print("🤖 Bot is running...")
     app.run_polling()
