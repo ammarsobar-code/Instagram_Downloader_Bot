@@ -1,5 +1,4 @@
-pyTelegramBotAPI==4.26.0
-flask==3.0.3
-requests==2.32.3
-yt-dlp
-moviepy
+parth-dl
+instascrape
+requests
+python-telegram-bot==20.7
