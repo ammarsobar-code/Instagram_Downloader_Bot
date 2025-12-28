@@ -1,6 +1,3 @@
-pyTelegramBotAPI
-flask
-requests
-yt-dlp
-gallery-dl
-instaloader
+aiogram==3.3.0
+instaloader==4.18.1
+requests==2.32.0
