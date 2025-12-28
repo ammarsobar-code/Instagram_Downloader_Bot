@@ -3,9 +3,9 @@ from telebot import types
 from flask import Flask
 from threading import Thread
 from yt_dlp import YoutubeDL
-from moviepy import VideoFileClip
+from moviepy import VideoFileClip  # تم تصحيح هذا السطر للعمل مع الإصدار الجديد
 
-# --- 1. سيرفر Flask للحفاظ على نشاط البوت على Render ---
+# --- 1. سيرفر Flask للحفاظ على نشاط البوت ---
 app = Flask('')
 @app.route('/')
 def home(): return "Instagram Ultra Bot is Online"
@@ -28,8 +28,8 @@ def compress_video(input_path, output_path):
     """ضغط الفيديو لتقليل الحجم قبل الرفع"""
     try:
         clip = VideoFileClip(input_path)
-        # خفض الجودة قليلاً لضمان قبول تليجرام للملف
-        clip.write_videofile(output_path, bitrate="1200k", codec="libx264", audio_codec="aac", temp_audiofile='temp-audio.m4a', remove_temp=True)
+        # خفض الجودة لضمان قبول تليجرام للملف (تحت 50 ميجا)
+        clip.write_videofile(output_path, bitrate="1200k", codec="libx264", audio_codec="aac")
         clip.close()
         return True
     except: return False
@@ -80,12 +80,12 @@ def handle_verification(call):
         markup = types.InlineKeyboardMarkup()
         markup.add(types.InlineKeyboardButton("متابعة الحساب 👻 Follow", url=SNAP_LINK))
         markup.add(types.InlineKeyboardButton("تفعيل البوت 🔓 Activate", callback_data="ins_step_2"))
-        bot.send_message(user_id, fail_msg, reply_markup=markup, parse_mode='HTML')
+        bot.edit_message_text(fail_msg, user_id, call.message.message_id, reply_markup=markup, parse_mode='HTML')
     elif call.data == "ins_step_2":
         user_status[user_id] = "verified"
-        bot.send_message(user_id, "<b>تم تفعيل البوت بنجاح ✅\nالرجاء ارسال الرابط 🔗\n\n<b>The bot has been successfully activated ✅</b></b>", parse_mode='HTML')
+        bot.edit_message_text("<b>تم تفعيل البوت بنجاح ✅\nالرجاء ارسال الرابط 🔗\n\n<b>The bot has been successfully activated ✅</b></b>", user_id, call.message.message_id, parse_mode='HTML')
 
-# --- 5. معالج التحميل الرئيسي (مع ميزة فحص الحجم والضغط) ---
+# --- 5. معالج التحميل الرئيسي ---
 
 @bot.message_handler(func=lambda message: "instagram.com" in message.text)
 def handle_instagram(message):
@@ -101,32 +101,24 @@ def handle_instagram(message):
 
     if video_url:
         try:
-            # فحص حجم الملف قبل التحميل
             head = requests.head(video_url)
             file_size = int(head.headers.get('Content-Length', 0))
 
-            # إذا كان الحجم أكبر من 48 ميجابايت، نقوم بالضغط
             if file_size > 48 * 1024 * 1024:
                 bot.edit_message_text("<b>الفيديو كبير جداً، جاري ضغطه لتقليل الحجم... ⚙️</b>", user_id, prog.message_id, parse_mode='HTML')
+                temp_in, temp_out = f"in_{user_id}.mp4", f"out_{user_id}.mp4"
                 
-                temp_in = f"in_{user_id}.mp4"
-                temp_out = f"out_{user_id}.mp4"
-                
-                # تحميل الملف للضغط
-                with open(temp_in, 'wb') as f:
-                    f.write(requests.get(video_url).content)
+                with open(temp_in, 'wb') as f: f.write(requests.get(video_url).content)
                 
                 if compress_video(temp_in, temp_out):
                     with open(temp_out, 'rb') as f:
-                        bot.send_video(user_id, f, caption="<b>تم الضغط والتحميل بواسطة ALL MEDIA ✅</b>", parse_mode='HTML')
+                        bot.send_video(user_id, f, caption="<b>تم التحميل بواسطة ALL MEDIA ✅</b>", parse_mode='HTML')
                 else:
-                    bot.send_message(user_id, f"<b>تعذر ضغط الفيديو، يمكنك تحميله من الرابط المباشر:</b>\n{video_url}")
+                    bot.send_message(user_id, f"<b>تعذر الضغط، الرابط المباشر:</b>\n{video_url}")
                 
-                # تنظيف
                 for f in [temp_in, temp_out]: 
                     if os.path.exists(f): os.remove(f)
             else:
-                # تحميل عادي للأحجام الصغيرة
                 video_res = requests.get(video_url).content
                 bot.send_video(user_id, io.BytesIO(video_res), caption="<b>تم التحميل بواسطة ALL MEDIA ✅</b>", parse_mode='HTML')
 
