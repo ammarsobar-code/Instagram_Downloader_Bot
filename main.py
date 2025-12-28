@@ -1,97 +1,85 @@
-import os, subprocess, shutil, telebot, time, sys, requests
+import os, subprocess, shutil, telebot, time, sys, json
 from flask import Flask
 from threading import Thread
 
-# تثبيت وتحديث كافة المحركات لضمان أعلى أداء
-def install_engines():
-    print("🔄 Installing Mega Engines...")
-    subprocess.check_call([sys.executable, "-m", "pip", "install", "--upgrade", "pip"])
-    subprocess.check_call([sys.executable, "-m", "pip", "install", "yt-dlp", "gallery-dl", "instaloader", "pyTelegramBotAPI", "flask", "requests"])
+# --- 1. وظيفة تحويل الكوكيز من JSON إلى Netscape ---
+def convert_json_to_netscape(json_file, output_file):
+    try:
+        with open(json_file, 'r') as f:
+            cookies = json.load(f)
+        with open(output_file, 'w') as f:
+            f.write("# Netscape HTTP Cookie File\n")
+            for c in cookies:
+                domain = c.get('domain', '')
+                # تحويل القيمة المنطقية إلى TRUE/FALSE نصية
+                flag = "TRUE" if domain.startswith('.') else "FALSE"
+                path = c.get('path', '/')
+                secure = "TRUE" if c.get('secure') else "FALSE"
+                # وقت الانتهاء (إذا لم يوجد نضع وقتاً بعيداً)
+                expiry = int(c.get('expirationDate', time.time() + 31536000))
+                name = c.get('name', '')
+                value = c.get('value', '')
+                f.write(f"{domain}\t{flag}\t{path}\t{secure}\t{expiry}\t{name}\t{value}\n")
+        print("✅ Cookies converted to Netscape format.")
+    except Exception as e:
+        print(f"❌ Cookie conversion failed: {e}")
 
-install_engines()
+# --- 2. إعداد البيئة وتثبيت الأدوات ---
+def prepare_env():
+    subprocess.check_call([sys.executable, "-m", "pip", "install", "--upgrade", "pip"])
+    subprocess.check_call([sys.executable, "-m", "pip", "install", "yt-dlp", "gallery-dl", "instaloader", "pyTelegramBotAPI", "flask"])
+    
+    # تحويل ملف الكوكيز إذا كان موجوداً بصيغة JSON
+    if os.path.exists('cookies.json'):
+        convert_json_to_netscape('cookies.json', 'cookies.txt')
+
+prepare_env()
 
 API_TOKEN = os.getenv('BOT_TOKEN')
 bot = telebot.TeleBot(API_TOKEN)
 DOWNLOAD_DIR = "downloads"
-app = Flask('')
 
-@app.route('/')
-def home(): return "Multi-Engine Bot is Running"
-
-def clean_dir():
-    if os.path.exists(DOWNLOAD_DIR): shutil.rmtree(DOWNLOAD_DIR)
-    os.makedirs(DOWNLOAD_DIR, exist_ok=True)
-
-# دالة تنظيف الروابط من الزوائد التي تسبب أخطاء (مثل ?igsh=)
-def clean_url(url):
-    return url.split('?')[0].split('&')[0].strip()
-
-# --- المحركات المجانية المتسلسلة ---
-
-def engine_yt_dlp(url):
-    """المحرك الأقوى: yt-dlp مع دعم الكوكيز"""
-    print(f"🚀 Trying yt-dlp: {url}")
-    cmd = [sys.executable, "-m", "yt_dlp", "-o", f"{DOWNLOAD_DIR}/%(title)s.%(ext)s", "--no-playlist", url]
-    if os.path.exists("cookies.txt"):
-        cmd.extend(["--cookies", "cookies.txt"])
-    return subprocess.run(cmd, capture_output=True, timeout=120).returncode == 0
-
-def engine_gallery_dl(url):
-    """المحرك الثاني: gallery-dl (ممتاز للألبومات)"""
-    print(f"🚀 Trying gallery-dl: {url}")
-    cmd = [sys.executable, "-m", "gallery_dl", "-d", DOWNLOAD_DIR]
-    if os.path.exists("cookies.txt"):
-        cmd.extend(["--cookies", "cookies.txt"])
-    cmd.append(url)
-    return subprocess.run(cmd, capture_output=True, timeout=120).returncode == 0
-
-def engine_instaloader(url):
-    """المحرك الثالث: Instaloader (بديل سريع)"""
-    print(f"🚀 Trying Instaloader...")
-    try:
-        shortcode = url.split("/")[-2] if url.endswith("/") else url.split("/")[-1]
-        cmd = [sys.executable, "-m", "instaloader", "--dirname-pattern=" + DOWNLOAD_DIR, "--", f"-{shortcode}"]
-        return subprocess.run(cmd, capture_output=True, timeout=120).returncode == 0
-    except: return False
-
-# --- معالج الرسائل ---
-
-@bot.message_handler(func=lambda message: "instagram.com" in message.text)
-def handle_instagram(message):
-    raw_url = message.text.strip()
-    target_url = clean_url(raw_url) # تنظيف الرابط فوراً
+# --- 3. محركات التحميل ---
+def try_engines(url):
+    target = url.split('?')[0].strip() # تنظيف الرابط
+    if not os.path.exists(DOWNLOAD_DIR): os.makedirs(DOWNLOAD_DIR)
     
-    status = bot.reply_to(message, "⏳ جاري محاولة التحميل بأقوى المحركات المجانية...")
-    clean_dir()
+    # المحرك 1: yt-dlp
+    print(f"Running Engine 1 (yt-dlp) for: {target}")
+    cmd1 = [sys.executable, "-m", "yt_dlp", "-o", f"{DOWNLOAD_DIR}/%(title)s.%(ext)s", "--no-playlist", target]
+    if os.path.exists("cookies.txt"): cmd1.extend(["--cookies", "cookies.txt"])
+    if subprocess.run(cmd1).returncode == 0: return True
 
-    # محاولة المحركات بالتسلسل (yt-dlp -> gallery-dl -> instaloader)
-    success = False
-    if engine_yt_dlp(target_url):
-        success = True
-    elif engine_gallery_dl(target_url):
-        success = True
-    elif engine_instaloader(target_url):
-        success = True
+    # المحرك 2: gallery-dl
+    print("Running Engine 2 (gallery-dl)")
+    cmd2 = [sys.executable, "-m", "gallery_dl", "-d", DOWNLOAD_DIR]
+    if os.path.exists("cookies.txt"): cmd2.extend(["--cookies", "cookies.txt"])
+    cmd2.append(target)
+    if subprocess.run(cmd2).returncode == 0: return True
 
-    if success:
-        files_found = False
-        for root, _, filenames in os.walk(DOWNLOAD_DIR):
-            for name in filenames:
-                f_path = os.path.join(root, name)
-                if name.lower().endswith((".mp4", ".mov", ".jpg", ".jpeg", ".png", ".webp")):
-                    with open(f_path, "rb") as f:
-                        if name.lower().endswith((".mp4", ".mov")):
-                            bot.send_video(message.chat.id, f, caption="✅ تم التحميل بواسطة المحرك المتعدد")
-                        else:
-                            bot.send_photo(message.chat.id, f, caption="✅ تم التحميل بواسطة المحرك المتعدد")
-                    files_found = True
-        
-        if files_found:
-            bot.delete_message(message.chat.id, status.message_id)
-            return
+    return False
 
-    bot.edit_message_text("❌ فشلت جميع المحاولات المجانية. قد يكون الحساب خاصاً جداً أو الكوكيز انتهت صلاحيتها.", message.chat.id, status.message_id)
+# --- 4. معالج البوت ---
+@bot.message_handler(func=lambda m: "instagram.com" in m.text)
+def handle_insta(message):
+    status = bot.reply_to(message, "⏳ جاري التحميل بأقوى المحركات...")
+    if try_engines(message.text):
+        for root, _, files in os.walk(DOWNLOAD_DIR):
+            for file in files:
+                path = os.path.join(root, file)
+                with open(path, "rb") as f:
+                    if file.lower().endswith(('.mp4', '.mov')):
+                        bot.send_video(message.chat.id, f)
+                    else:
+                        bot.send_photo(message.chat.id, f)
+        shutil.rmtree(DOWNLOAD_DIR)
+        bot.delete_message(message.chat.id, status.message_id)
+    else:
+        bot.edit_message_text("❌ فشل التحميل. الحساب خاص أو الرابط غير مدعوم.", message.chat.id, status.message_id)
 
-if __name__ == "__main__":
-    Thread(target=lambda: app.run(host='0.0.0.0', port=8080)).start()
-    bot.infinity_polling()
+# تشغيل Flask للبقاء حياً على Render
+app = Flask('')
+@app.route('/')
+def home(): return "Bot is Live"
+Thread(target=lambda: app.run(host='0.0.0.0', port=8080)).start()
+bot.infinity_polling()
