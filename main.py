@@ -1,106 +1,36 @@
 import os
-import subprocess
-import shutil
+from flask import Flask, request
 from telegram import Update
-from telegram.ext import (
-    ApplicationBuilder,
-    MessageHandler,
-    ContextTypes,
-    filters
-)
+from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 
-DOWNLOAD_DIR = "downloads"
-os.makedirs(DOWNLOAD_DIR, exist_ok=True)
+# المتغيرات البيئية
+BOT_TOKEN = os.environ.get("BOT_TOKEN")
+APP_URL = os.environ.get("APP_URL")  # رابط HTTPS للبوت على Render
 
+# إنشاء Flask app
+flask_app = Flask(__name__)
 
-def clean_downloads():
-    if os.path.exists(DOWNLOAD_DIR):
-        shutil.rmtree(DOWNLOAD_DIR)
-    os.makedirs(DOWNLOAD_DIR, exist_ok=True)
+# إنشاء Telegram bot
+app = ApplicationBuilder().token(BOT_TOKEN).build()
 
+# مثال على أمر /start
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("🤖 البوت شغال عبر Webhook!")
 
-def download_with_parth_dl(url):
-    try:
-        result = subprocess.run(
-            ["parth-dl", url, "-o", DOWNLOAD_DIR],
-            capture_output=True,
-            text=True,
-            timeout=60
-        )
+app.add_handler(CommandHandler("start", start))
 
-        if result.returncode != 0:
-            return None
+# استقبال Webhook من Telegram
+@flask_app.route(f"/{BOT_TOKEN}", methods=["POST"])
+def webhook():
+    update = Update.de_json(request.get_json(force=True), app.bot)
+    app.update_queue.put_nowait(update)
+    return "ok"
 
-        files = [
-            os.path.join(DOWNLOAD_DIR, f)
-            for f in os.listdir(DOWNLOAD_DIR)
-        ]
-        return files if files else None
+# ضبط Webhook عند Start
+async def on_startup(app):
+    await app.bot.set_webhook(f"{APP_URL}/{BOT_TOKEN}")
 
-    except Exception as e:
-        print("parth-dl error:", e)
-        return None
-
-
-def download_with_gallery_dl(url):
-    try:
-        subprocess.run(
-            ["gallery-dl", "-d", DOWNLOAD_DIR, url],
-            check=True,
-            timeout=60
-        )
-
-        files = []
-        for root, _, filenames in os.walk(DOWNLOAD_DIR):
-            for name in filenames:
-                files.append(os.path.join(root, name))
-
-        return files if files else None
-
-    except Exception as e:
-        print("gallery-dl error:", e)
-        return None
-
-
-async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    url = update.message.text.strip()
-
-    if "instagram.com" not in url:
-        await update.message.reply_text("❌ أرسل رابط إنستجرام فقط")
-        return
-
-    await update.message.reply_text("⏳ جاري التحميل...")
-
-    clean_downloads()
-
-    files = download_with_parth_dl(url)
-
-    if not files:
-        await update.message.reply_text("⚠️ المحاولة الأولى فشلت، جاري المحاولة الثانية...")
-        files = download_with_gallery_dl(url)
-
-    if not files:
-        await update.message.reply_text("❌ فشل التحميل")
-        return
-
-    for file_path in files:
-        try:
-            await update.message.reply_document(
-                document=open(file_path, "rb")
-            )
-        except Exception as e:
-            print("Send error:", e)
-
-    clean_downloads()
-
+app.post_init = on_startup
 
 if __name__ == "__main__":
-    BOT_TOKEN = os.getenv("BOT_TOKEN")
-
-    app = ApplicationBuilder().token(BOT_TOKEN).build()
-    app.add_handler(
-        MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message)
-    )
-
-    print("🤖 Bot is running...")
-    app.run_polling()
+    flask_app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
