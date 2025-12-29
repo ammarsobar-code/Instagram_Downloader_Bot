@@ -2,4 +2,3 @@ pyTelegramBotAPI
 flask
 yt-dlp
 gallery-dl
-imageio-ffmpeg
