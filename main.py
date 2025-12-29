@@ -2,6 +2,24 @@ import os, subprocess, shutil, telebot, time, sys, json
 from flask import Flask
 from threading import Thread
 
+# --- إضافة محرك FFmpeg برمجياً ---
+def prepare_env():
+    print("🔄 Installing & Configuring FFmpeg...")
+    # تثبيت المكتبة التي توفر ffmpeg بشكل ثابت
+    subprocess.check_call([sys.executable, "-m", "pip", "install", "static-ffmpeg"])
+    # تشغيل الأمر لتجهيز الملفات التنفيذية
+    import static_ffmpeg
+    static_ffmpeg.add_paths() 
+    print("✅ FFmpeg is ready to use.")
+
+# استدعاء الوظيفة قبل أي شيء
+prepare_env()
+
+# ... (بقية كود البوت الذي أعطيتك إياه سابقاً)
+import os, subprocess, shutil, telebot, time, sys, json
+from flask import Flask
+from threading import Thread
+
 # --- 1. إعداد البيئة وتثبيت الأدوات ---
 def prepare_env():
     print("🔄 Setting up Video Processing Factory...")
