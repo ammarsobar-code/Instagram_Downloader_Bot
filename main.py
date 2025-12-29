@@ -2,7 +2,20 @@ import os, subprocess, shutil, telebot, time, sys, json
 from flask import Flask
 from threading import Thread
 
-# --- 1. وظيفة تحويل الكوكيز (JSON to Netscape) ---
+# --- 1. إعداد البيئة وتثبيت الأدوات ---
+def prepare_env():
+    print("🔄 Setting up Video Processing Factory...")
+    subprocess.check_call([sys.executable, "-m", "pip", "install", "--upgrade", "pip"])
+    # تثبيت الأدوات مع التأكد من وجود ffprobe-linux للتعامل مع الأحجام
+    subprocess.check_call([sys.executable, "-m", "pip", "install", "yt-dlp", "gallery-dl", "pyTelegramBotAPI", "flask"])
+
+prepare_env()
+
+API_TOKEN = os.getenv('BOT_TOKEN')
+bot = telebot.TeleBot(API_TOKEN)
+DOWNLOAD_DIR = "downloads"
+
+# --- 2. وظيفة تحويل الكوكيز (JSON to Netscape) ---
 def convert_json_to_netscape(json_file, output_file):
     try:
         if not os.path.exists(json_file): return
@@ -11,90 +24,64 @@ def convert_json_to_netscape(json_file, output_file):
             f.write("# Netscape HTTP Cookie File\n")
             for c in cookies:
                 domain = c.get('domain', '')
-                flag = "TRUE" if domain.startswith('.') else "FALSE"
-                path = c.get('path', '/')
-                secure = "TRUE" if c.get('secure') else "FALSE"
-                expiry = int(c.get('expirationDate', time.time() + 31536000))
-                f.write(f"{domain}\t{flag}\t{path}\t{secure}\t{expiry}\t{c.get('name', '')}\t{c.get('value', '')}\n")
-        print("✅ Cookies converted successfully.")
-    except Exception as e: print(f"❌ Cookie error: {e}")
+                f.write(f"{domain}\tTRUE\t{c.get('path', '/')}\tTRUE\t{int(c.get('expirationDate', time.time()+31536000))}\t{c.get('name', '')}\t{c.get('value', '')}\n")
+    except: pass
 
-# --- 2. إعداد البيئة وتثبيت المكتبات اللازمة للمعالجة ---
-def prepare_env():
-    subprocess.check_call([sys.executable, "-m", "pip", "install", "--upgrade", "pip"])
-    # إضافة imageio-ffmpeg لضمان دمج الصوت والصورة بشكل صحيح
-    subprocess.check_call([sys.executable, "-m", "pip", "install", "yt-dlp", "gallery-dl", "pyTelegramBotAPI", "flask", "imageio-ffmpeg"])
-    if os.path.exists('cookies.json'):
-        convert_json_to_netscape('cookies.json', 'cookies.txt')
-
-prepare_env()
-
-API_TOKEN = os.getenv('BOT_TOKEN')
-bot = telebot.TeleBot(API_TOKEN)
-DOWNLOAD_DIR = "downloads"
-
-# --- 3. محرك التحميل المطور (إجبار دمج الفيديو) ---
-def try_engines(url):
+# --- 3. محرك التحميل مع الضغط التلقائي ---
+def download_and_process(url):
     target = url.split('?')[0].strip()
     if os.path.exists(DOWNLOAD_DIR): shutil.rmtree(DOWNLOAD_DIR)
     os.makedirs(DOWNLOAD_DIR)
     
-    print(f"🚀 Processing Video: {target}")
-    
-    # محرك yt-dlp مع إعدادات دمج الفيديو (mp4)
-    cmd1 = [
+    # تحويل الكوكيز قبل البدء
+    convert_json_to_netscape('cookies.json', 'cookies.txt')
+
+    # إعدادات yt-dlp: إجبار جودة mp4 وضغط الفيديو إذا تجاوز 40 ميجا
+    cmd = [
         sys.executable, "-m", "yt_dlp",
         "-o", f"{DOWNLOAD_DIR}/video.%(ext)s",
-        "--merge-output-format", "mp4", # إجبار الدمج في ملف mp4 واحد
-        "--format", "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best", # اختيار أفضل جودة mp4
+        "--format", "bestvideo[ext=mp4][vcodec^=avc1]+bestaudio[ext=m4a]/best[ext=mp4]/best",
+        "--merge-output-format", "mp4",
+        "--postprocessor-args", "ffmpeg:-vcodec libx264 -crf 28 -preset faster", # ضغط الفيديو لتقليل الحجم
+        "--max-filesize", "45M", # الحد الأقصى قبل الرفض
         "--no-playlist",
         target
     ]
     
-    if os.path.exists("cookies.txt"):
-        cmd1.extend(["--cookies", "cookies.txt"])
+    if os.path.exists("cookies.txt"): cmd.extend(["--cookies", "cookies.txt"])
     
-    result = subprocess.run(cmd1, capture_output=True)
-    if result.returncode == 0: return True
-
-    # محرك احتياطي في حال فشل الأول
-    cmd2 = [sys.executable, "-m", "gallery_dl", "-d", DOWNLOAD_DIR, target]
-    if os.path.exists("cookies.txt"): cmd2.insert(4, "--cookies")
-    if os.path.exists("cookies.txt"): cmd2.insert(5, "cookies.txt")
-    
-    return subprocess.run(cmd2).returncode == 0
+    result = subprocess.run(cmd, capture_output=True)
+    return result.returncode == 0
 
 # --- 4. معالج البوت ---
 @bot.message_handler(func=lambda m: "instagram.com" in m.text)
 def handle_insta(message):
-    status = bot.reply_to(message, "⏳ جاري معالجة الفيديو بجودة عالية...")
+    status = bot.reply_to(message, "⏳ جاري تحميل ومعالجة الفيديو (قد يتم ضغطه ليناسب تليجرام)...")
     
-    if try_engines(message.text):
-        files_sent = False
+    if download_and_process(message.text):
+        sent = False
         for root, _, files in os.walk(DOWNLOAD_DIR):
             for file in files:
                 path = os.path.join(root, file)
-                if file.lower().endswith(('.mp4', '.mov', '.m4v')):
-                    with open(path, "rb") as f:
-                        bot.send_video(message.chat.id, f, supports_streaming=True)
-                    files_sent = True
-                elif file.lower().endswith(('.jpg', '.jpeg', '.png')):
-                    # لا نرسل الصور إلا إذا لم نجد فيديوهات (للألبومات)
-                    if not any(f.endswith('.mp4') for f in files):
-                        with open(path, "rb") as f:
-                            bot.send_photo(message.chat.id, f)
-                        files_sent = True
+                if file.lower().endswith(('.mp4', '.mov')):
+                    # التحقق من حجم الملف
+                    file_size = os.path.getsize(path) / (1024 * 1024)
+                    if file_size > 48:
+                        bot.edit_message_text("⚠️ الفيديو كبير جداً (أكثر من 50 ميجا)، جاري إرساله كمستند...", message.chat.id, status.message_id)
+                        with open(path, "rb") as f: bot.send_document(message.chat.id, f)
+                    else:
+                        with open(path, "rb") as f: bot.send_video(message.chat.id, f, supports_streaming=True)
+                    sent = True
         
-        if files_sent:
+        if sent:
             bot.delete_message(message.chat.id, status.message_id)
             shutil.rmtree(DOWNLOAD_DIR)
             return
 
-    bot.edit_message_text("❌ فشل التحميل كفيديو. قد يكون الرابط تالفاً أو يحتاج لتحديث الكوكيز.", message.chat.id, status.message_id)
+    bot.edit_message_text("❌ فشل المعالجة. المحرك لم يجد فيديو حقيقي أو تم حظر السيرفر.", message.chat.id, status.message_id)
 
-# تشغيل السيرفر
 app = Flask('')
 @app.route('/')
-def home(): return "Video Engine Active"
+def home(): return "Ready"
 Thread(target=lambda: app.run(host='0.0.0.0', port=8080)).start()
 bot.infinity_polling()
