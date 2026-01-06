@@ -1,123 +1,100 @@
-import os, subprocess, shutil, telebot, time, sys, json
+import os, shutil, telebot, time, sys, json
 from flask import Flask
 from threading import Thread
+import subprocess
 
-# --- 1. إعداد البيئة (تثبيت الأدوات و FFmpeg) ---
-def prepare_env():
-    print("🔄 Setting up Video Processing Factory...")
-    try:
-        subprocess.check_call([sys.executable, "-m", "pip", "install", "--upgrade", "pip"])
-        # إضافة static-ffmpeg لضمان وجود المحرك على سيرفر Render
-        subprocess.check_call([sys.executable, "-m", "pip", "install", "yt-dlp", "gallery-dl", "pyTelegramBotAPI", "flask", "static-ffmpeg"])
-        
-        import static_ffmpeg
-        static_ffmpeg.add_paths() 
-        print("✅ FFmpeg & Tools are ready.")
-    except Exception as e:
-        print(f"⚠️ Env Setup Warning: {e}")
-
-prepare_env()
-
-# --- 2. وظيفة التنظيف التلقائي (Auto-Clean) ---
-def reset_server_environment():
-    """تنظيف شامل للمساحة والعمليات العالقة لضمان استمرار البوت"""
-    try:
-        # 1. مسح مجلد التحميلات تماماً
-        if os.path.exists("downloads"):
-            shutil.rmtree("downloads", ignore_errors=True)
-        os.makedirs("downloads", exist_ok=True)
-        
-        # 2. تنظيف كاش yt-dlp
-        subprocess.run([sys.executable, "-m", "yt_dlp", "--rm-cache-dir"], stderr=subprocess.DEVNULL)
-        
-        # 3. قتل عمليات المعالجة العالقة في الرام
-        if os.name != 'nt':
-            subprocess.run(["pkill", "-9", "-f", "yt-dlp"], stderr=subprocess.DEVNULL)
-            subprocess.run(["pkill", "-9", "-f", "ffmpeg"], stderr=subprocess.DEVNULL)
-        print("🧹 System Reset Done")
-    except:
-        pass
-
-# --- 3. إعدادات البوت وكوكيز إنستجرام ---
-API_TOKEN = os.getenv('BOT_TOKEN')
+# --- إعدادات البيئة ---
+# سيحاول البوت أخذ التوكن من إعدادات السيرفر، إذا لم يجده سيستخدم التوكن المكتوب يدوياً
+API_TOKEN = os.getenv('BOT_TOKEN') or "ضع_هنا_توكن_بوتك_إذا_لم_تضعه_في_الإعدادات"
 bot = telebot.TeleBot(API_TOKEN)
 DOWNLOAD_DIR = "downloads"
 
-def convert_json_to_netscape(json_file, output_file):
+# تأكد من وجود مجلد التحميل
+if not os.path.exists(DOWNLOAD_DIR):
+    os.makedirs(DOWNLOAD_DIR)
+
+# --- وظائف المساعدة ---
+def reset_server_environment():
+    """تنظيف الملفات المؤقتة لتوفير المساحة"""
     try:
-        if not os.path.exists(json_file): return
+        if os.path.exists(DOWNLOAD_DIR):
+            shutil.rmtree(DOWNLOAD_DIR)
+        os.makedirs(DOWNLOAD_DIR)
+        # تنظيف كاش yt-dlp
+        subprocess.run(["python3", "-m", "yt_dlp", "--rm-cache-dir"], stderr=subprocess.DEVNULL)
+    except Exception as e:
+        print(f"Cleanup error: {e}")
+
+def convert_json_to_netscape(json_file, output_file):
+    """تحويل الكوكيز من صيغة JSON إلى Netscape التي يفهمها yt-dlp"""
+    try:
+        if not os.path.exists(json_file): return False
         with open(json_file, 'r') as f: cookies = json.load(f)
         with open(output_file, 'w') as f:
             f.write("# Netscape HTTP Cookie File\n")
             for c in cookies:
                 domain = c.get('domain', '')
-                f.write(f"{domain}\tTRUE\t{c.get('path', '/')}\tTRUE\t{int(c.get('expirationDate', time.time()+31536000))}\t{c.get('name', '')}\t{c.get('value', '')}\n")
-    except: pass
+                path = c.get('path', '/')
+                expires = int(c.get('expirationDate', time.time() + 31536000))
+                name = c.get('name', '')
+                value = c.get('value', '')
+                f.write(f"{domain}\tTRUE\t{path}\tTRUE\t{expires}\t{name}\t{value}\n")
+        return True
+    except: return False
 
-# --- 4. محرك التحميل مع الضغط ---
 def download_and_process(url):
-    # تنظيف قبل البدء لضمان مساحة فارغة
     reset_server_environment()
-    
     target = url.split('?')[0].strip()
-    convert_json_to_netscape('cookies.json', 'cookies.txt')
+    
+    # محاولة استخدام الكوكيز إذا كانت موجودة
+    use_cookies = convert_json_to_netscape('cookies.json', 'cookies.txt')
 
     cmd = [
-        sys.executable, "-m", "yt_dlp",
+        "python3", "-m", "yt_dlp",
         "-o", f"{DOWNLOAD_DIR}/video_%(id)s.%(ext)s",
         "--format", "bestvideo[ext=mp4][vcodec^=avc1]+bestaudio[ext=m4a]/best[ext=mp4]/best",
         "--merge-output-format", "mp4",
-        "--postprocessor-args", "ffmpeg:-vcodec libx264 -crf 28 -preset faster",
-        "--max-filesize", "45M",
+        "--max-filesize", "48M", # لتجنب تجاوز حدود تيليجرام
         "--no-playlist",
         target
     ]
     
-    if os.path.exists("cookies.txt"):
+    if use_cookies:
         cmd.extend(["--cookies", "cookies.txt"])
     
     result = subprocess.run(cmd, capture_output=True)
     return result.returncode == 0
 
-# --- 5. معالج البوت ---
+# --- معالج الرسائل ---
 @bot.message_handler(func=lambda m: "instagram.com" in m.text)
 def handle_insta(message):
-    status = bot.reply_to(message, "⏳ جاري التحميل والمعالجة...")
+    status = bot.reply_to(message, "⏳ جاري معالجة الرابط...")
     
     try:
         if download_and_process(message.text):
-            sent = False
-            for root, _, files in os.walk(DOWNLOAD_DIR):
-                for file in files:
-                    path = os.path.join(root, file)
-                    if file.lower().endswith(('.mp4', '.mov')):
-                        file_size = os.path.getsize(path) / (1024 * 1024)
-                        if file_size > 48:
-                            with open(path, "rb") as f: bot.send_document(message.chat.id, f)
-                        else:
-                            with open(path, "rb") as f: bot.send_video(message.chat.id, f, supports_streaming=True)
-                        sent = True
-            
-            if sent:
-                bot.delete_message(message.chat.id, status.message_id)
-            else:
-                bot.edit_message_text("❌ لم يتم العثور على ملف فيديو مدعوم.", message.chat.id, status.message_id)
+            for file in os.listdir(DOWNLOAD_DIR):
+                path = os.path.join(DOWNLOAD_DIR, file)
+                if file.lower().endswith(('.mp4', '.mov')):
+                    with open(path, "rb") as f:
+                        bot.send_video(message.chat.id, f, supports_streaming=True)
+                    break
+            bot.delete_message(message.chat.id, status.message_id)
         else:
-            bot.edit_message_text("❌ فشل التحميل. قد يكون الحساب خاصاً أو الرابط غير صالح.", message.chat.id, status.message_id)
-    
+            bot.edit_message_text("❌ فشل التحميل (قد يكون الحساب خاصاً أو الفيديو طويلاً جداً).", message.chat.id, status.message_id)
     except Exception as e:
-        bot.send_message(message.chat.id, "⚠️ حدث خطأ تقني أثناء المعالجة.")
-    
+        bot.send_message(message.chat.id, f"⚠️ حدث خطأ: {str(e)}")
     finally:
-        # التنظيف النهائي فوراً بعد الإرسال
         reset_server_environment()
 
-# --- 6. السيرفر والتشغيل ---
+# --- تشغيل السيرفر (Keep Alive) ---
 app = Flask('')
 @app.route('/')
-def home(): return "Instagram Engine Active"
+def home(): return "Bot is Running!"
+
+def run_flask():
+    app.run(host='0.0.0.0', port=8080)
 
 if __name__ == "__main__":
-    Thread(target=lambda: app.run(host='0.0.0.0', port=8080)).start()
-    reset_server_environment() # تنظيف عند البدء
-    bot.infinity_polling(timeout=20, long_polling_timeout=10, restart_on_change=False)
+    Thread(target=run_flask).start()
+    print("🚀 Bot is starting...")
+    bot.infinity_polling()
