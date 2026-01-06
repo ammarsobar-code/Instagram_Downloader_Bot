@@ -1,32 +1,28 @@
-import os, shutil, telebot, time, sys, json
+import os, shutil, telebot, time, sys, json, subprocess
 from flask import Flask
 from threading import Thread
-import subprocess
 
-# --- إعدادات البيئة ---
-# سيحاول البوت أخذ التوكن من إعدادات السيرفر، إذا لم يجده سيستخدم التوكن المكتوب يدوياً
-API_TOKEN = os.getenv('BOT_TOKEN') or "ضع_هنا_توكن_بوتك_إذا_لم_تضعه_في_الإعدادات"
+# --- إعدادات البوت ---
+# سيحاول الكود جلب التوكن من إعدادات السيرفر (Environment Variables)
+# إذا لم تكن قد وضعتها في السيرفر، ضع التوكن مكان كلمة Your_Token_Here
+API_TOKEN = os.getenv('BOT_TOKEN') 
 bot = telebot.TeleBot(API_TOKEN)
 DOWNLOAD_DIR = "downloads"
 
-# تأكد من وجود مجلد التحميل
-if not os.path.exists(DOWNLOAD_DIR):
-    os.makedirs(DOWNLOAD_DIR)
-
-# --- وظائف المساعدة ---
+# --- وظائف النظام والتنظيف ---
 def reset_server_environment():
-    """تنظيف الملفات المؤقتة لتوفير المساحة"""
+    """حذف الملفات القديمة لتوفير المساحة ومنع الأخطاء"""
     try:
         if os.path.exists(DOWNLOAD_DIR):
-            shutil.rmtree(DOWNLOAD_DIR)
-        os.makedirs(DOWNLOAD_DIR)
-        # تنظيف كاش yt-dlp
+            shutil.rmtree(DOWNLOAD_DIR, ignore_errors=True)
+        os.makedirs(DOWNLOAD_DIR, exist_ok=True)
+        # تنظيف كاش yt-dlp لمنع تراكم الملفات المؤقتة
         subprocess.run(["python3", "-m", "yt_dlp", "--rm-cache-dir"], stderr=subprocess.DEVNULL)
-    except Exception as e:
-        print(f"Cleanup error: {e}")
+    except:
+        pass
 
 def convert_json_to_netscape(json_file, output_file):
-    """تحويل الكوكيز من صيغة JSON إلى Netscape التي يفهمها yt-dlp"""
+    """تحويل الكوكيز لتجاوز حظر إنستجرام"""
     try:
         if not os.path.exists(json_file): return False
         with open(json_file, 'r') as f: cookies = json.load(f)
@@ -42,11 +38,10 @@ def convert_json_to_netscape(json_file, output_file):
         return True
     except: return False
 
-def download_and_process(url):
+def download_video(url):
+    """محرك التحميل الأساسي"""
     reset_server_environment()
     target = url.split('?')[0].strip()
-    
-    # محاولة استخدام الكوكيز إذا كانت موجودة
     use_cookies = convert_json_to_netscape('cookies.json', 'cookies.txt')
 
     cmd = [
@@ -54,47 +49,59 @@ def download_and_process(url):
         "-o", f"{DOWNLOAD_DIR}/video_%(id)s.%(ext)s",
         "--format", "bestvideo[ext=mp4][vcodec^=avc1]+bestaudio[ext=m4a]/best[ext=mp4]/best",
         "--merge-output-format", "mp4",
-        "--max-filesize", "48M", # لتجنب تجاوز حدود تيليجرام
+        "--max-filesize", "48M",
         "--no-playlist",
         target
     ]
-    
-    if use_cookies:
-        cmd.extend(["--cookies", "cookies.txt"])
+    if use_cookies: cmd.extend(["--cookies", "cookies.txt"])
     
     result = subprocess.run(cmd, capture_output=True)
     return result.returncode == 0
 
-# --- معالج الرسائل ---
+# --- معالجة رسائل التيليجرام ---
 @bot.message_handler(func=lambda m: "instagram.com" in m.text)
 def handle_insta(message):
-    status = bot.reply_to(message, "⏳ جاري معالجة الرابط...")
-    
+    status = bot.reply_to(message, "⏳ جاري تحميل الفيديو، انتظر قليلاً...")
     try:
-        if download_and_process(message.text):
+        if download_video(message.text):
+            sent = False
             for file in os.listdir(DOWNLOAD_DIR):
-                path = os.path.join(DOWNLOAD_DIR, file)
                 if file.lower().endswith(('.mp4', '.mov')):
-                    with open(path, "rb") as f:
-                        bot.send_video(message.chat.id, f, supports_streaming=True)
+                    path = os.path.join(DOWNLOAD_DIR, file)
+                    with open(path, "rb") as v:
+                        bot.send_video(message.chat.id, v, supports_streaming=True)
+                    sent = True
                     break
-            bot.delete_message(message.chat.id, status.message_id)
+            if sent:
+                bot.delete_message(message.chat.id, status.message_id)
+            else:
+                bot.edit_message_text("❌ لم أتمكن من العثور على ملف الفيديو بعد تحميله.", message.chat.id, status.message_id)
         else:
-            bot.edit_message_text("❌ فشل التحميل (قد يكون الحساب خاصاً أو الفيديو طويلاً جداً).", message.chat.id, status.message_id)
+            bot.edit_message_text("❌ فشل التحميل. تأكد أن الرابط عام وليس لحساب خاص.", message.chat.id, status.message_id)
     except Exception as e:
-        bot.send_message(message.chat.id, f"⚠️ حدث خطأ: {str(e)}")
+        bot.send_message(message.chat.id, f"⚠️ حدث خطأ فني: {str(e)}")
     finally:
         reset_server_environment()
 
-# --- تشغيل السيرفر (Keep Alive) ---
+# --- سيرفر Flask للبقاء حياً على Render ---
 app = Flask('')
 @app.route('/')
-def home(): return "Bot is Running!"
+def home(): return "Bot is Active!"
 
 def run_flask():
     app.run(host='0.0.0.0', port=8080)
 
+# --- نقطة التشغيل الرئيسية ---
 if __name__ == "__main__":
+    # 1. تشغيل السيرفر في الخلفية
     Thread(target=run_flask).start()
-    print("🚀 Bot is starting...")
-    bot.infinity_polling()
+    
+    # 2. حل مشكلة Error 409 (حذف أي جلسات معلقة)
+    print("🧹 Cleaning up old sessions...")
+    bot.remove_webhook()
+    time.sleep(1)
+    
+    # 3. تشغيل البوت
+    print("🚀 Bot is starting now...")
+    reset_server_environment()
+    bot.infinity_polling(skip_pending=True)
