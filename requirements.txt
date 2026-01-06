@@ -1,5 +1,4 @@
 pyTelegramBotAPI
-flask
 yt-dlp
-gallery-dl
-static-ffmpeg
+flask
+gunicorn
