@@ -1,107 +1,126 @@
-import os, shutil, telebot, time, sys, json, subprocess
+import os
+import json
+import telebot
+import yt_dlp
+import requests
+import threading
+import tempfile
 from flask import Flask
-from threading import Thread
+
+# --- إعدادات السيرفر (Render) ---
+app = Flask(__name__)
+
+@app.route('/')
+def health_check():
+    return "Bot is alive!", 200
 
 # --- إعدادات البوت ---
-# سيحاول الكود جلب التوكن من إعدادات السيرفر (Environment Variables)
-# إذا لم تكن قد وضعتها في السيرفر، ضع التوكن مكان كلمة Your_Token_Here
-API_TOKEN = os.getenv('BOT_TOKEN') 
-bot = telebot.TeleBot(API_TOKEN)
-DOWNLOAD_DIR = "downloads"
+# تأكد من إضافة BOT_TOKEN في Environment Variables على Render
+TOKEN = os.environ.get('BOT_TOKEN')
+if not TOKEN:
+    print("Error: BOT_TOKEN variable not found!")
+    
+bot = telebot.TeleBot(TOKEN)
+JSON_COOKIES_PATH = "cookies.json"
 
-# --- وظائف النظام والتنظيف ---
-def reset_server_environment():
-    """حذف الملفات القديمة لتوفير المساحة ومنع الأخطاء"""
+# --- دالة تحويل الكوكيز من JSON إلى Netscape (عشان yt-dlp يفهمها) ---
+def prepare_cookies():
+    if not os.path.exists(JSON_COOKIES_PATH):
+        return None
+    
     try:
-        if os.path.exists(DOWNLOAD_DIR):
-            shutil.rmtree(DOWNLOAD_DIR, ignore_errors=True)
-        os.makedirs(DOWNLOAD_DIR, exist_ok=True)
-        # تنظيف كاش yt-dlp لمنع تراكم الملفات المؤقتة
-        subprocess.run(["python3", "-m", "yt_dlp", "--rm-cache-dir"], stderr=subprocess.DEVNULL)
-    except:
-        pass
-
-def convert_json_to_netscape(json_file, output_file):
-    """تحويل الكوكيز لتجاوز حظر إنستجرام"""
-    try:
-        if not os.path.exists(json_file): return False
-        with open(json_file, 'r') as f: cookies = json.load(f)
-        with open(output_file, 'w') as f:
+        with open(JSON_COOKIES_PATH, 'r') as f:
+            cookies_data = json.load(f)
+        
+        tmp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.txt')
+        with open(tmp_file.name, 'w') as f:
             f.write("# Netscape HTTP Cookie File\n")
-            for c in cookies:
+            for c in cookies_data:
                 domain = c.get('domain', '')
+                flag = "TRUE" if domain.startswith('.') else "FALSE"
                 path = c.get('path', '/')
-                expires = int(c.get('expirationDate', time.time() + 31536000))
+                secure = "TRUE" if c.get('secure', False) else "FALSE"
+                expiry = int(c.get('expirationDate', 0))
                 name = c.get('name', '')
                 value = c.get('value', '')
-                f.write(f"{domain}\tTRUE\t{path}\tTRUE\t{expires}\t{name}\t{value}\n")
-        return True
-    except: return False
+                f.write(f"{domain}\t{flag}\t{path}\t{secure}\t{expiry}\t{name}\t{value}\n")
+        return tmp_file.name
+    except Exception as e:
+        print(f"Cookie conversion error: {e}")
+        return None
 
-def download_video(url):
-    """محرك التحميل الأساسي"""
-    reset_server_environment()
-    target = url.split('?')[0].strip()
-    use_cookies = convert_json_to_netscape('cookies.json', 'cookies.txt')
+# --- المصدر 1: yt-dlp (داخلي) ---
+def download_ytdlp(url, cookie_path):
+    outtmpl = f"downloads/%(id)s.%(ext)s"
+    ydl_opts = {
+        'format': 'best',
+        'quiet': True,
+        'outtmpl': outtmpl,
+    }
+    if cookie_path:
+        ydl_opts['cookiefile'] = cookie_path
+        
+    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+        info = ydl.extract_info(url, download=True)
+        return ydl.prepare_filename(info)
 
-    cmd = [
-        "python3", "-m", "yt_dlp",
-        "-o", f"{DOWNLOAD_DIR}/video_%(id)s.%(ext)s",
-        "--format", "bestvideo[ext=mp4][vcodec^=avc1]+bestaudio[ext=m4a]/best[ext=mp4]/best",
-        "--merge-output-format", "mp4",
-        "--max-filesize", "48M",
-        "--no-playlist",
-        target
-    ]
-    if use_cookies: cmd.extend(["--cookies", "cookies.txt"])
+# --- المصدر 2: Cobalt API (خارجي) ---
+def download_cobalt(url):
+    api_url = "https://api.cobalt.tools/api/json"
+    payload = {"url": url, "vQuality": "720"}
+    headers = {"Accept": "application/json", "Content-Type": "application/json"}
     
-    result = subprocess.run(cmd, capture_output=True)
-    return result.returncode == 0
+    response = requests.post(api_url, json=payload, headers=headers)
+    if response.status_code == 200:
+        return response.json().get('url')
+    return None
 
-# --- معالجة رسائل التيليجرام ---
+# --- معالج رسائل إنستغرام ---
 @bot.message_handler(func=lambda m: "instagram.com" in m.text)
 def handle_insta(message):
-    status = bot.reply_to(message, "⏳ جاري تحميل الفيديو، انتظر قليلاً...")
+    url = message.text.strip()
+    status_msg = bot.reply_to(message, "⏳ جاري المعالجة...")
+    
+    # 1. محاولة yt-dlp
     try:
-        if download_video(message.text):
-            sent = False
-            for file in os.listdir(DOWNLOAD_DIR):
-                if file.lower().endswith(('.mp4', '.mov')):
-                    path = os.path.join(DOWNLOAD_DIR, file)
-                    with open(path, "rb") as v:
-                        bot.send_video(message.chat.id, v, supports_streaming=True)
-                    sent = True
-                    break
-            if sent:
-                bot.delete_message(message.chat.id, status.message_id)
-            else:
-                bot.edit_message_text("❌ لم أتمكن من العثور على ملف الفيديو بعد تحميله.", message.chat.id, status.message_id)
-        else:
-            bot.edit_message_text("❌ فشل التحميل. تأكد أن الرابط عام وليس لحساب خاص.", message.chat.id, status.message_id)
+        bot.edit_message_text("🚀 محاولة 1 (yt-dlp)...", message.chat.id, status_msg.message_id)
+        c_path = prepare_cookies()
+        file_path = download_ytdlp(url, c_path)
+        
+        with open(file_path, 'rb') as video:
+            bot.send_video(message.chat.id, video)
+        
+        os.remove(file_path)
+        if c_path: os.remove(c_path)
+        bot.delete_message(message.chat.id, status_msg.message_id)
+        return
     except Exception as e:
-        bot.send_message(message.chat.id, f"⚠️ حدث خطأ فني: {str(e)}")
-    finally:
-        reset_server_environment()
+        print(f"yt-dlp error: {e}")
 
-# --- سيرفر Flask للبقاء حياً على Render ---
-app = Flask('')
-@app.route('/')
-def home(): return "Bot is Active!"
+    # 2. محاولة Cobalt API
+    try:
+        bot.edit_message_text("⚡ محاولة 2 (External API)...", message.chat.id, status_msg.message_id)
+        video_link = download_cobalt(url)
+        if video_link:
+            bot.send_video(message.chat.id, video_link)
+            bot.delete_message(message.chat.id, status_msg.message_id)
+            return
+    except Exception as e:
+        print(f"API error: {e}")
 
-def run_flask():
-    app.run(host='0.0.0.0', port=8080)
+    bot.edit_message_text("❌ فشلت جميع المحاولات لهذا الرابط.", message.chat.id, status_msg.message_id)
 
-# --- نقطة التشغيل الرئيسية ---
+# --- تشغيل السيرفر والبوت معاً ---
+def run_bot():
+    bot.infinity_polling()
+
 if __name__ == "__main__":
-    # 1. تشغيل السيرفر في الخلفية
-    Thread(target=run_flask).start()
+    if not os.path.exists('downloads'):
+        os.makedirs('downloads')
+        
+    # تشغيل البوت في Thread منفصل
+    threading.Thread(target=run_bot).start()
     
-    # 2. حل مشكلة Error 409 (حذف أي جلسات معلقة)
-    print("🧹 Cleaning up old sessions...")
-    bot.remove_webhook()
-    time.sleep(1)
-    
-    # 3. تشغيل البوت
-    print("🚀 Bot is starting now...")
-    reset_server_environment()
-    bot.infinity_polling(skip_pending=True)
+    # تشغيل Flask على البورت المخصص من Render
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host='0.0.0.0', port=port)
